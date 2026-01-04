@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+
+	"steeeee0223.http/internal/headers"
 )
 
 type RequestLine struct {
@@ -14,12 +16,14 @@ type RequestLine struct {
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     *headers.Headers
 	state       parserState
 }
 
 func newRequest() *Request {
 	return &Request{
-		state: StateInit,
+		Headers: headers.NewHeaders(),
+		state:   StateInit,
 	}
 }
 
@@ -31,9 +35,10 @@ var SEPARATOR = []byte("\r\n")
 type parserState string
 
 const (
-	StateInit  parserState = "init"
-	StateDone  parserState = "done"
-	StateError parserState = "error"
+	StateInit    parserState = "init"
+	StateHeaders parserState = "headers"
+	StateDone    parserState = "done"
+	StateError   parserState = "error"
 )
 
 func parseRequestLine(b []byte) (*RequestLine, int, error) {
@@ -68,6 +73,11 @@ func (r *Request) Print() {
 	fmt.Printf("- Method: %s\n", r.RequestLine.Method)
 	fmt.Printf("- Target: %s\n", r.RequestLine.RequestTarget)
 	fmt.Printf("- Version: %s\n", r.RequestLine.HttpVersion)
+	// Headers
+	fmt.Printf("Headers:\n")
+	r.Headers.ForEach(func(n, v string) {
+		fmt.Printf("- %s: %s\n", n, v)
+	})
 }
 
 func (r *Request) parse(data []byte) (int, error) {
@@ -75,12 +85,14 @@ func (r *Request) parse(data []byte) (int, error) {
 
 outer:
 	for {
+		curr := data[read:]
+
 		switch r.state {
 		case StateError:
 			return 0, ERROR_REQUEST_IN_ERROR_STATE
 
 		case StateInit:
-			rl, n, err := parseRequestLine(data[read:])
+			rl, n, err := parseRequestLine(curr)
 			if err != nil {
 				r.state = StateError
 				return 0, err
@@ -92,10 +104,30 @@ outer:
 
 			r.RequestLine = *rl
 			read += n
-			r.state = StateDone
+			r.state = StateHeaders
+
+		case StateHeaders:
+			n, done, err := r.Headers.Parse(curr)
+			if err != nil {
+				r.state = StateError
+				return 0, err
+			}
+
+			if n == 0 {
+				break outer
+			}
+
+			read += n
+
+			if done {
+				r.state = StateDone
+			}
 
 		case StateDone:
 			break outer
+
+		default:
+			panic("unknown parser state")
 		}
 	}
 	return read, nil
@@ -119,7 +151,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 
 		bufLen += n
-		readN, err := req.parse(buf[:bufLen+n])
+		readN, err := req.parse(buf[:bufLen])
 		if err != nil {
 			return nil, err
 		}
