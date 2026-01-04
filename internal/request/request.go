@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strconv"
 
 	"steeeee0223.http/internal/headers"
 )
@@ -17,12 +18,29 @@ type RequestLine struct {
 type Request struct {
 	RequestLine RequestLine
 	Headers     *headers.Headers
-	state       parserState
+	Body        string
+
+	state parserState
+}
+
+func getInt(headers *headers.Headers, name string, defaultValue int) int {
+	valueStr, exists := headers.Get(name)
+	if !exists {
+		return defaultValue
+	}
+
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+
+	return value
 }
 
 func newRequest() *Request {
 	return &Request{
 		Headers: headers.NewHeaders(),
+		Body:    "",
 		state:   StateInit,
 	}
 }
@@ -37,6 +55,7 @@ type parserState string
 const (
 	StateInit    parserState = "init"
 	StateHeaders parserState = "headers"
+	StateBody    parserState = "body"
 	StateDone    parserState = "done"
 	StateError   parserState = "error"
 )
@@ -78,6 +97,15 @@ func (r *Request) Print() {
 	r.Headers.ForEach(func(n, v string) {
 		fmt.Printf("- %s: %s\n", n, v)
 	})
+	// Body
+	fmt.Printf("Body:\n")
+	fmt.Printf("%s\n", r.Body)
+}
+
+func (r *Request) hasBody() bool {
+	// TODO
+	length := getInt(r.Headers, "content-length", 0)
+	return length > 0
 }
 
 func (r *Request) parse(data []byte) (int, error) {
@@ -86,6 +114,9 @@ func (r *Request) parse(data []byte) (int, error) {
 outer:
 	for {
 		curr := data[read:]
+		if len(curr) == 0 {
+			break outer
+		}
 
 		switch r.state {
 		case StateError:
@@ -119,7 +150,26 @@ outer:
 
 			read += n
 
+			// TODO tmp solution for testing usage
 			if done {
+				if r.hasBody() {
+					r.state = StateBody
+				} else {
+					r.state = StateDone
+				}
+			}
+
+		case StateBody:
+			length := getInt(r.Headers, "content-length", 0)
+			if length == 0 {
+				panic("chunked not implemented")
+			}
+
+			rest := min(length-len(r.Body), len(curr))
+			r.Body += string(curr[:rest])
+			read += rest
+
+			if len(r.Body) == length {
 				r.state = StateDone
 			}
 

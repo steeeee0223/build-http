@@ -8,6 +8,9 @@
 go run ./cmd/tcplistener | tee /tmp/tcp.txt
 
 nc -v localhost 42069
+
+# run all tests
+go run ./...
 ```
 
 ## Reference
